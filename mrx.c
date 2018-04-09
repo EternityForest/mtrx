@@ -24,6 +24,7 @@ static pthread_barrier_t init_barrier;
 static pthread_mutex_t audio_mutex, time_mutex;
 static struct timespec last_packet_clock = {0, 0};
 static int64_t server_time_diff_global = 0;
+static int expected_loss = 3;
 
 static void *audio_playback_thread(void *arg) {
 	printverbose("Audio playback thread started\n");

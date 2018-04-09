@@ -17,8 +17,38 @@
  */
 
 #include "mtrx.h"
+#include <netdb.h>
 
 static unsigned long int kbps = 128;
+static unsigned long int expected_loss = 3;
+
+
+
+//Thanks to: https://www.binarytides.com/hostname-to-ip-address-c-sockets-linux/
+int hostname_to_ip(char *hostname , char *ip)
+{
+    struct addrinfo *servinfo, *p;
+    struct sockaddr_in *h;
+    int rv;
+ 
+    if ( (rv = getaddrinfo( hostname , 0,0, &servinfo)) != 0) 
+    {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
+        exit (1);
+    }
+ 
+    // loop through all the results and connect to the first we can
+    for(p = servinfo; p != NULL; p = p->ai_next) 
+    {
+        h = (struct sockaddr_in *) p->ai_addr;
+        strcpy(ip , inet_ntoa( h->sin_addr ) );
+    }
+     
+    freeaddrinfo(servinfo); // all done with this structure
+    return 0;
+}
+
+
 
 static void *time_sync_thread(void *arg) {
 	printverbose("Time sync thread started\n");
@@ -57,7 +87,7 @@ int main(int argc, char *argv[]) {
 	fprintf(stderr, "Copyright (C) 2014-2017 Vittorio Gambaletta <openwrt@vittgam.net>\n\n");
 
 	while (1) {
-		int c = getopt(argc, argv, "h:p:d:f:r:c:t:k:b:v:");
+		int c = getopt(argc, argv, "h:p:d:f:r:c:t:k:b:l:v:");
 		if (c == -1) {
 			break;
 		} else if (c == 'h') {
@@ -80,7 +110,9 @@ int main(int argc, char *argv[]) {
 			buffermult = strtoul(optarg, NULL, 10);
 		} else if (c == 'T') {
 			enable_time_sync = strtoul(optarg, NULL, 10);
-		} else if (c == 'v') {
+		} else if (c == 'l') {
+			expected_loss = strtoul(optarg, NULL, 10);
+        } else if (c == 'v') {
 			verbose = strtoul(optarg, NULL, 10);
 		} else {
 			fprintf(stderr, "\nUsage: mtx [<options>]\n\n");
@@ -94,11 +126,15 @@ int main(int argc, char *argv[]) {
 			fprintf(stderr, "    -k <kbps>   Network bitrate (default: %lu kbps)\n", kbps);
 			fprintf(stderr, "    -b <n>      ALSA buffer multiplier (default: %lu)\n", buffermult);
 			fprintf(stderr, "    -T <n>      Enable or disable time synchronization (default: %lu)\n", enable_time_sync);
+			fprintf(stderr, "    -l <%%>      Expected packet loss (default: %lu%%)\n", expected_loss);
 			fprintf(stderr, "    -v <n>      Be verbose (default: %lu)\n", verbose);
 			fprintf(stderr, "\n");
 			exit(1);
 		}
 	}
+	
+	//Resolve the address, mostly for MDNS
+	hostname_to_ip(addr,addr);
 
 	int sock = init_socket(0);
 
@@ -131,6 +167,7 @@ int main(int argc, char *argv[]) {
 	}
 	opus_encoder_ctl(encoder, OPUS_SET_BITRATE(kbps * 1000));
 	opus_encoder_ctl(encoder, OPUS_SET_COMPLEXITY(9));
+	opus_encoder_ctl(encoder, OPUS_SET_PACKET_LOSS_PERC(expected_loss));
 
 	snd_pcm_t *snd = NULL;
 	snd_pcm_uframes_t buffer = samples;

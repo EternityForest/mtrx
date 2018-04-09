@@ -8,7 +8,7 @@
 ```
 Usage: mtx [<options>]
 
-    -h <addr>   IP address (default: 239.48.48.1)
+    -h <addr>   IP address or hostname (default: 239.48.48.1)
     -p <port>   UDP port (default: 1350)
     -d <dev>    ALSA device name, or '-' for stdin (default: 'default')
     -f <n>      Use float samples (1) or signed 16 bit integer samples (0) (default: 0)
@@ -18,6 +18,7 @@ Usage: mtx [<options>]
     -k <kbps>   Network bitrate (default: 128 kbps)
     -b <n>      ALSA buffer multiplier (default: 3)
     -T <n>      Enable or disable time synchronization (default: 1)
+    -l <%>      Expected packet loss (default: 3%)
     -v <n>      Be verbose (default: 0)
 ```
 
@@ -73,6 +74,7 @@ pcm.pnm {
 ## Bugs
 
 - Well, all the desync bugs seem to happen (and needed a resync hack in `mtx`) only when using `alsa-pulse` to capture from the null output sink monitor...
+- Hostnames are only resolved once when the app starts, which could be an issue if it changes at runtime.
 - If you find any bugs, please report them! :)
 
 ## TODO

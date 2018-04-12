@@ -4,6 +4,7 @@
 
 **Copyright (C) 2014-2017 Vittorio Gambaletta**
 
+**THIS IS AN INCOMPATIBLE BRANCH by Daniel Dunn. It adds redundancy to cover lost packets, using 16kbps more bandwidth for a slight improvement with heavy packet loss.**
 ## mtx
 ```
 Usage: mtx [<options>]

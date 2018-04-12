@@ -22,6 +22,7 @@
 static unsigned long int kbps = 128;
 static unsigned long int expected_loss = 3;
 
+unsigned char count =0;
 
 
 //Thanks to: https://www.binarytides.com/hostname-to-ip-address-c-sockets-linux/
@@ -132,10 +133,14 @@ int main(int argc, char *argv[]) {
 			exit(1);
 		}
 	}
-	
-	//Resolve the address, mostly for MDNS
-	hostname_to_ip(addr,addr);
+    
+    struct in_addr xyz;
 
+    if(!inet_aton(argv[1],&xyz))
+    {
+      hostname_to_ip(addr,addr);
+    }
+    
 	int sock = init_socket(0);
 
 	set_realtime_prio();
@@ -154,29 +159,46 @@ int main(int argc, char *argv[]) {
 	}
 
 	snd_pcm_uframes_t samples = audio_packet_duration * rate / 1000;
+    snd_pcm_uframes_t samples_q = audio_packet_duration * rate / 1000;
+
 	size_t pcm_size_multiplier = (use_float ? sizeof(float) : sizeof(int16_t)) * channels;
 	size_t pcm_size = samples * pcm_size_multiplier;
 	uint64_t clock_period = (uint64_t) 1000000 * audio_packet_duration;
-	size_t bytes_per_frame = kbps * audio_packet_duration / 8;
-
+	size_t bytes_per_frame = (kbps * audio_packet_duration / 8)+(24 * audio_packet_duration / 8);
+    size_t wb_bytes =(kbps * audio_packet_duration / 8);
+    size_t nb_bytes = (24 * audio_packet_duration / 8);
 	int error;
 	OpusEncoder *encoder = opus_encoder_create(rate, channels, OPUS_APPLICATION_AUDIO, &error);
+    OpusEncoder *encoder_nb = opus_encoder_create(rate, channels, OPUS_APPLICATION_AUDIO, &error);
+
 	if (encoder == NULL) {
 		fprintf(stderr, "opus_encoder_create: %s\n", opus_strerror(error));
 		exit(1);
 	}
+	
+	opus_encoder_ctl(encoder_nb, OPUS_SET_BITRATE(16 * 1000));
+	opus_encoder_ctl(encoder_nb, OPUS_SET_COMPLEXITY(9));
+	opus_encoder_ctl(encoder_nb, OPUS_SET_PACKET_LOSS_PERC(50));	
+    	opus_encoder_ctl(encoder_nb, OPUS_SET_BANDWIDTH(OPUS_BANDWIDTH_FULLBAND));	
+
+	
+	
 	opus_encoder_ctl(encoder, OPUS_SET_BITRATE(kbps * 1000));
 	opus_encoder_ctl(encoder, OPUS_SET_COMPLEXITY(9));
 	opus_encoder_ctl(encoder, OPUS_SET_PACKET_LOSS_PERC(expected_loss));
+    	opus_encoder_ctl(encoder, OPUS_SET_BANDWIDTH(OPUS_BANDWIDTH_FULLBAND));	
 
 	snd_pcm_t *snd = NULL;
 	snd_pcm_uframes_t buffer = samples;
 	if (strcmp(device, "-") != 0) {
 		snd = snd_my_init(device, SND_PCM_STREAM_CAPTURE, rate, channels, use_float, &buffer, buffermult);
-	}
+// 	}
 
 	void *pcm = alloca(pcm_size);
-	struct azzp *packet = alloca(bytes_per_frame + sizeof(struct timep));
+	void *pcm_q = alloca(pcm_size);
+    void *swapbuf =0;
+    
+	struct azzp *packet = alloca(bytes_per_frame + sizeof(struct timep)+4);
 
 	struct timespec clock = {0, 0};
 	int resync = 1;
@@ -241,16 +263,46 @@ int main(int argc, char *argv[]) {
 			}
 		}
 
-		ssize_t z;
+		if(!swapbuf)
+        {
+            		//It's our one buffer queue
+		swapbuf = pcm;
+        pcm = pcm_q;
+        pcm_q = swapbuf;
+        
+        samples_q=samples;
+            continue;
+        }
+        
+		ssize_t z,z2;
 		if (use_float) {
-			z = opus_encode_float(encoder, pcm, samples, &packet->data, bytes_per_frame);
+			z = opus_encode_float(encoder, pcm_q, samples_q, &packet->data, wb_bytes);
 		} else {
-			z = opus_encode(encoder, pcm, samples, &packet->data, bytes_per_frame);
+			z = opus_encode(encoder, pcm_q, samples_q, &packet->data, wb_bytes);
 		}
 		if (z < 0) {
 			fprintf(stderr, "opus_encode: %s\n", opus_strerror(z));
 			exit(1);
 		}
+		
+		
+        if (use_float) {
+			z2 = opus_encode_float(encoder_nb, pcm, samples, (&packet->data)+z, nb_bytes);
+		} else {
+			z2 = opus_encode(encoder_nb, pcm, samples, (&packet->data)+z, nb_bytes);
+		}
+		if (z2 < 0) {
+			fprintf(stderr, "opus_encode: %s\n", opus_strerror(z));
+			exit(1);
+		}
+		
+		//It's our one buffer queue
+		swapbuf = pcm;
+        pcm = pcm_q;
+        pcm_q = swapbuf;
+        
+        samples_q=samples;
+
 
 		struct sockaddr_in addrin;
 		memset(&addrin, 0, sizeof(addrin));
@@ -275,8 +327,9 @@ int main(int argc, char *argv[]) {
 
 		packet->tv_sec = htobe64(now.tv_sec);
 		packet->tv_nsec = htobe32(now.tv_nsec);
+        packet->wb_len = htobe32(z);
 
-		if (sendto(sock, packet, z + sizeof(struct timep), 0, (struct sockaddr *) &addrin, sizeof(addrin)) < 0) {
+		if (sendto(sock, packet, z + sizeof(struct timep)+4+z2, 0, (struct sockaddr *) &addrin, sizeof(addrin)) < 0) {
 			perror("sendto");
 			exit(1);
 		}
@@ -288,4 +341,5 @@ int main(int argc, char *argv[]) {
 	opus_encoder_destroy(encoder);
 
 	return 0;
+}
 }

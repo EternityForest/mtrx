@@ -24,7 +24,6 @@ static pthread_barrier_t init_barrier;
 static pthread_mutex_t audio_mutex, time_mutex;
 static struct timespec last_packet_clock = {0, 0};
 static int64_t server_time_diff_global = 0;
-static int expected_loss = 3;
 
 static void *audio_playback_thread(void *arg) {
 	printverbose("Audio playback thread started\n");
@@ -60,6 +59,8 @@ static void *audio_playback_thread(void *arg) {
 	}
 
 	pthread_barrier_wait(&init_barrier);
+    
+    struct azz *oldframe = NULL;
 
 	while (1) {
 		struct azz *currframe = NULL;
@@ -138,20 +139,51 @@ static void *audio_playback_thread(void *arg) {
 		int r;
 		if (currframe) {
 			if (use_float) {
-				r = opus_decode_float(decoder, &currframe->packet.data, currframe->datalen, pcm, samples, 0);
+				r = opus_decode_float(decoder, &currframe->packet.data, currframe->packet.wb_len, pcm, samples, 0);
 			} else {
-				r = opus_decode(decoder, &currframe->packet.data, currframe->datalen, pcm, samples, 0);
+				r = opus_decode(decoder, &currframe->packet.data,currframe->packet.wb_len, pcm, samples, 0);
 			}
-			free(currframe);
+			if(oldframe)
+            {
+                free(oldframe);
+                oldframe = NULL;
+            }
+
+            oldframe = currframe;
+            currframe = NULL;
+
+            
+            if (r != samples) {
+			fprintf(stderr, "opus_decod e: %s\n", opus_strerror(r));
+			exit(1);
+            }
 		} else {
 			printverbose("no packet received!\n");
-			r = opus_decode(decoder, NULL, 0, pcm, samples, 1);
-		}
 
-		if (r != samples) {
-			fprintf(stderr, "opus_decode: %s\n", opus_strerror(r));
+            if (oldframe != NULL) {
+                printf("using old frame");
+                if (use_float) {
+                    r = opus_decode_float(decoder, (&oldframe->packet.data)+(oldframe->packet.wb_len), oldframe->datalen-oldframe->packet.wb_len, pcm, samples, 0);
+                } else {
+                    r = opus_decode(decoder, (&oldframe->packet.data)+(oldframe->packet.wb_len),  oldframe->datalen-oldframe->packet.wb_len, pcm, samples, 0);
+                }
+			
+		    	free(oldframe);
+                oldframe = NULL;
+            }
+            else
+            {
+
+			  r = opus_decode(decoder, NULL, 0, pcm, samples, 1);
+            }
+		
+            		if (r != samples) {
+			fprintf(stderr, "opus_decod in backup e: %s\n", opus_strerror(r));
 			exit(1);
 		}
+
+        }
+
 
 		if (snd != NULL) {
 			int retval = snd_pcm_writei(snd, pcm, samples);
@@ -304,6 +336,7 @@ int main(int argc, char *argv[]) {
 		currframe->datalen -= sizeof(struct timep);
 		currframe->packet.tv_sec = be64toh(currframe->packet.tv_sec);
 		currframe->packet.tv_nsec = be32toh(currframe->packet.tv_nsec);
+		currframe->packet.wb_len = be32toh(currframe->packet.wb_len);
 
 		if (currframe->datalen == sizeof(struct timep)) {
 			struct timep2 *timepacket = (struct timep2 *)&currframe->packet;
@@ -330,6 +363,7 @@ int main(int argc, char *argv[]) {
 			clock_gettime(CLOCK_REALTIME, &last_time_sent);
 			timepacket.tv_sec = htobe64(last_time_sent.tv_sec);
 			timepacket.tv_nsec = htobe32(last_time_sent.tv_nsec);
+     
 			if (sendto(sock, &timepacket, sizeof(struct timep), 0, (struct sockaddr *) &addrin, sizeof(addrin)) < 0) {
 				perror("sendto");
 			}

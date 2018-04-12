@@ -38,6 +38,9 @@
 struct __attribute__((__packed__)) azzp {
 	int64_t tv_sec;
 	uint32_t tv_nsec;
+    //How many bytes are of the wide bandwith and how many are narrowband. Equiv to start pos
+    //of narrowband
+    uint32_t wb_len;
 	unsigned char data;
 };
 

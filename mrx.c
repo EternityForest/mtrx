@@ -18,12 +18,24 @@
 
 #include "mtrx.h"
 
-static signed long int delay = 80;
+static signed long int totaldelay = 80;
 static struct azz *audio_buffer = NULL;
 static pthread_barrier_t init_barrier;
 static pthread_mutex_t audio_mutex, time_mutex;
 static struct timespec last_packet_clock = {0, 0};
 static int64_t server_time_diff_global = 0;
+
+void delay(int milliseconds)
+{
+    long pause;
+    clock_t now,then;
+
+    pause = milliseconds*(CLOCKS_PER_SEC/1000);
+    now = then = clock();
+    while( (now-then) < pause )
+        now = clock();
+}
+
 
 static void *audio_playback_thread(void *arg) {
 	printverbose("Audio playback thread started\n");
@@ -45,16 +57,16 @@ static void *audio_playback_thread(void *arg) {
 
 	snd_pcm_t *snd = NULL;
 	snd_pcm_uframes_t buffer = samples;
-	int64_t delay2 = (int64_t) delay * -1000000;
+	int64_t delay2 = (int64_t) totaldelay * -1000000;
 	if (strcmp(device, "-") != 0) {
 		snd = snd_my_init(device, SND_PCM_STREAM_PLAYBACK, rate, channels, use_float, &buffer, buffermult);
 		delay2 += (int64_t) buffer * 1000000000 / rate;
-		delay -= (int64_t) buffer * 1000 / rate;
+		totaldelay -= (int64_t) buffer * 1000 / rate;
 	}
 	int64_t delay1 = (int64_t) ((delay2 < 0 ? -delay2 : delay2) % clock_period) * (delay2 < 0 ? 1 : -1);
 
-	if (delay < 0) {
-		fprintf(stderr, "Total audio delay minus ALSA delay (%ld) cannot be negative.\n", delay);
+	if (totaldelay < 0) {
+		fprintf(stderr, "Total audio delay minus ALSA delay (%ld) cannot be negative.\n", totaldelay);
 		exit(1);
 	}
 
@@ -181,6 +193,53 @@ static void *audio_playback_thread(void *arg) {
 			fprintf(stderr, "opus_decod in backup e: %s\n", opus_strerror(r));
 			exit(1);
 		}
+		
+        //We decoded the old frame or an old frame just in case,
+        //But now we're going to wait a few ms and check again just in case something arrived.
+        //This should more than double our acceptable delay.
+                delay(15);
+                pthread_mutex_lock(&audio_mutex);
+                        while (audio_buffer) {
+                            if (audio_buffer->packet.tv_sec == now.tv_sec && audio_buffer->packet.tv_nsec == now.tv_nsec) {
+                                printverbose("got packet %"PRIi64".%09"PRIu32"\n", audio_buffer->packet.tv_sec, audio_buffer->packet.tv_nsec);
+                                currframe = audio_buffer;
+                                audio_buffer = audio_buffer->next;
+                                last_packet_clock = now;
+                                break;
+                            } else if (audio_buffer->packet.tv_sec > now.tv_sec || (audio_buffer->packet.tv_sec == now.tv_sec && audio_buffer->packet.tv_nsec > now.tv_nsec)) {
+                                //printverbose("future packet %"PRIi64".%09"PRIu32"\n", audio_buffer->packet.tv_sec, audio_buffer->packet.tv_nsec);
+                                break;
+                            } else {
+                                printverbose("skipping packet %"PRIi64".%09"PRIu32"\n", audio_buffer->packet.tv_sec, audio_buffer->packet.tv_nsec);
+                                currframe = audio_buffer;
+                                audio_buffer = audio_buffer->next;
+                                free(currframe);
+                                currframe = NULL;
+                            }
+                        }
+                pthread_mutex_unlock(&audio_mutex);
+                
+                if (currframe) {
+                    if (use_float) {
+                        r = opus_decode_float(decoder, &currframe->packet.data, currframe->packet.wb_len, pcm, samples, 0);
+                    } else {
+                        r = opus_decode(decoder, &currframe->packet.data,currframe->packet.wb_len, pcm, samples, 0);
+                    }
+                    if(oldframe)
+                    {
+                        free(oldframe);
+                        oldframe = NULL;
+                    }
+
+                    oldframe = currframe;
+                    currframe = NULL;
+
+                    
+                    if (r != samples) {
+                    fprintf(stderr, "opus_decod e: %s\n", opus_strerror(r));
+                    exit(1);
+                    }
+		}
 
         }
 
@@ -249,7 +308,7 @@ int main(int argc, char *argv[]) {
 		} else if (c == 'b') {
 			buffermult = strtoul(optarg, NULL, 10);
 		} else if (c == 'e') {
-			delay = strtol(optarg, NULL, 10);
+			totaldelay = strtol(optarg, NULL, 10);
 		} else if (c == 'T') {
 			enable_time_sync = strtoul(optarg, NULL, 10);
 		} else if (c == 'v') {
@@ -264,7 +323,7 @@ int main(int argc, char *argv[]) {
 			fprintf(stderr, "    -c <n>      Channels count (default: %lu)\n", channels);
 			fprintf(stderr, "    -t <ms>     Audio packet duration (default: %lu ms)\n", audio_packet_duration);
 			fprintf(stderr, "    -b <n>      ALSA buffer multiplier (default: %lu)\n", buffermult);
-			fprintf(stderr, "    -e <ms>     Audio total delay (default: %ld ms)\n", delay);
+			fprintf(stderr, "    -e <ms>     Audio total delay (default: %ld ms)\n", totaldelay);
 			fprintf(stderr, "    -T <n>      Enable or disable time synchronization (default: %lu)\n", enable_time_sync);
 			fprintf(stderr, "    -v <n>      Be verbose (default: %lu)\n", verbose);
 			fprintf(stderr, "\n");
@@ -375,7 +434,7 @@ int main(int argc, char *argv[]) {
 			free(currframe);
 		} else {
 			struct azz **audio_buffer_ptr = &audio_buffer;
-			unsigned int counter = delay < 150 ? 50 : (delay / 3);
+			unsigned int counter = totaldelay < 150 ? 50 : (totaldelay / 3);
 			while (--counter && *audio_buffer_ptr && (((*audio_buffer_ptr)->packet.tv_sec < currframe->packet.tv_sec) || ((*audio_buffer_ptr)->packet.tv_sec == currframe->packet.tv_sec && (*audio_buffer_ptr)->packet.tv_nsec < currframe->packet.tv_nsec))) {
 				audio_buffer_ptr = &(*audio_buffer_ptr)->next;
 			}

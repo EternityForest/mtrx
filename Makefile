@@ -5,7 +5,7 @@ INSTALL ?= install
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 
-CFLAGS += -std=gnu1x -Wall -pedantic -O2
+CFLAGS += -std=gnu1x -Wall -pedantic -O3
 
 LDLIBS_OPUS ?= -lopus
 LDLIBS_ASOUND ?= -lasound

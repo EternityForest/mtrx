@@ -142,6 +142,8 @@ int main(int argc, char *argv[]) {
     }
     
 	int sock = init_socket(0);
+    int tos = IPTOS_LOWDELAY;
+    setsockopt(sock, IPPROTO_IP, IP_TOS, &tos, sizeof(tos));
 
 	set_realtime_prio();
 
@@ -186,14 +188,18 @@ int main(int argc, char *argv[]) {
 	opus_encoder_ctl(encoder, OPUS_SET_BITRATE(kbps * 1000));
 	opus_encoder_ctl(encoder, OPUS_SET_COMPLEXITY(9));
 	opus_encoder_ctl(encoder, OPUS_SET_PACKET_LOSS_PERC(expected_loss));
-    	opus_encoder_ctl(encoder, OPUS_SET_BANDWIDTH(OPUS_BANDWIDTH_FULLBAND));	
+    opus_encoder_ctl(encoder, OPUS_SET_BANDWIDTH(OPUS_BANDWIDTH_FULLBAND));	
 
+   // opus_encoder_ctl(encoder,   OPUS_SET_PREDICTION_DISABLED(1));	
+    opus_encoder_ctl(encoder_nb,   OPUS_SET_PREDICTION_DISABLED(1));	
+
+  
 	snd_pcm_t *snd = NULL;
 	snd_pcm_uframes_t buffer = samples;
 	if (strcmp(device, "-") != 0) {
 		snd = snd_my_init(device, SND_PCM_STREAM_CAPTURE, rate, channels, use_float, &buffer, buffermult);
-// 	}
-
+	}
+ 
 	void *pcm = alloca(pcm_size);
 	void *pcm_q = alloca(pcm_size);
     void *swapbuf =0;
@@ -307,6 +313,7 @@ int main(int argc, char *argv[]) {
 		struct sockaddr_in addrin;
 		memset(&addrin, 0, sizeof(addrin));
 		addrin.sin_family = AF_INET;
+        
 		addrin.sin_addr.s_addr = inet_addr(addr);
 		addrin.sin_port = htons((uint16_t) port);
 
@@ -342,4 +349,4 @@ int main(int argc, char *argv[]) {
 
 	return 0;
 }
-}
+

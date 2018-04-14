@@ -76,8 +76,9 @@ static void *audio_playback_thread(void *arg) {
 
 	while (1) {
 		struct azz *currframe = NULL;
-
+        
 		int64_t server_time_diff;
+        unsigned int wait =5;
 		pthread_mutex_lock(&time_mutex);
 		server_time_diff = server_time_diff_global;
 		pthread_mutex_unlock(&time_mutex);
@@ -179,6 +180,7 @@ static void *audio_playback_thread(void *arg) {
                 } else {
                     r = opus_decode(decoder, (&oldframe->packet.data)+(oldframe->packet.wb_len),  oldframe->datalen-oldframe->packet.wb_len, pcm, samples, 0);
                 }
+                wait =5;
 			
 		    	free(oldframe);
                 oldframe = NULL;
@@ -187,6 +189,7 @@ static void *audio_playback_thread(void *arg) {
             {
 
 			  r = opus_decode(decoder, NULL, 0, pcm, samples, 1);
+              wait = 15;
             }
 		
             		if (r != samples) {
@@ -197,7 +200,7 @@ static void *audio_playback_thread(void *arg) {
         //We decoded the old frame or an old frame just in case,
         //But now we're going to wait a few ms and check again just in case something arrived.
         //This should more than double our acceptable delay.
-                delay(15);
+                delay(wait);
                 pthread_mutex_lock(&audio_mutex);
                         while (audio_buffer) {
                             if (audio_buffer->packet.tv_sec == now.tv_sec && audio_buffer->packet.tv_nsec == now.tv_nsec) {
